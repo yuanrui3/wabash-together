@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { getChatGPTUser, type ChatGPTUser } from "../../chatgpt-auth";
-import { AREAS, DAYS, MAX_ACTIVE_POSTS, MAX_POSTS_PER_24_HOURS, POSTING_LIMITS, TERMS_VERSION, type Community, type Intro, type Listing } from "../../../lib/community";
+import { AREAS, DAYS, PURDUE_PARKING, usesCampusParking, MAX_ACTIVE_POSTS, MAX_POSTS_PER_24_HOURS, POSTING_LIMITS, TERMS_VERSION, type Community, type Intro, type Listing } from "../../../lib/community";
 
 export const dynamic = "force-dynamic";
 
@@ -8,7 +8,7 @@ const day = 24 * 60 * 60 * 1_000;
 const postLifetime = 60 * day;
 const activityWindow = 180 * day;
 const activeListing = "removed_at IS NULL AND hidden_at IS NULL AND expires > ?";
-const listingFields = 'id, kind, role, title, area, destination, days, date, "start", "end", note, name, purdue, near_citybus AS nearCityBus, expires';
+const listingFields = 'id, kind, role, title, area, destination, days, date, "start", "end", note, name, purdue, parking_lot AS parkingLot, near_citybus AS nearCityBus, expires';
 const areaNames = new Set<string>(AREAS);
 const dayNames = new Set<string>(DAYS);
 const timeZone = "America/Indiana/Indianapolis";
@@ -193,11 +193,15 @@ function listingInput(input: Input, now: number, user: ChatGPTUser): ListingInpu
   if (input.nearCityBus !== undefined && typeof input.nearCityBus !== "boolean") {
     throw new RequestError("Choose whether you can meet near a CityBus stop.");
   }
+  const parkingLot = input.parkingLot === undefined ? "" : input.parkingLot;
+  if (parkingLot !== "" && (!usesCampusParking(kind, input.destination) || !PURDUE_PARKING.some(lot => lot === parkingLot))) {
+    throw new RequestError("Choose a listed Purdue parking lot for a recurring campus commute.");
+  }
   const purdue = input.purdue === true;
   if (purdue && !purdueEmail(user)) throw new RequestError("The Purdue badge requires a verified @purdue.edu sign-in email.", 403);
 
   return {
-    kind, role, purdue, nearCityBus: input.nearCityBus === true, days: kind === "oneoff" ? [] : days,
+    kind, role, purdue, parkingLot: String(parkingLot), nearCityBus: input.nearCityBus === true, days: kind === "oneoff" ? [] : days,
     date: kind === "oneoff" ? dayOfTrip(input.date, now) : "",
     title: sharedText(input.title, "title", 5, 70),
     area: area(input.area),
@@ -254,11 +258,11 @@ export async function POST(request: Request) {
         const fields = listingInput(input, now, user);
         const values = listingValues(fields);
         const statement = db.prepare(`
-          INSERT INTO listings (id, owner_id, name, kind, role, title, area, destination, days, date, "start", "end", note, purdue, near_citybus, created_at, updated_at, expires)
-          SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+          INSERT INTO listings (id, owner_id, name, kind, role, title, area, destination, days, date, "start", "end", note, purdue, near_citybus, parking_lot, created_at, updated_at, expires)
+          SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
           WHERE (SELECT COUNT(*) FROM listings WHERE owner_id = ? AND created_at > ?) < ${MAX_POSTS_PER_24_HOURS}
             AND (SELECT COUNT(*) FROM listings WHERE owner_id = ? AND removed_at IS NULL AND expires > ?) < ${MAX_ACTIVE_POSTS}
-        `).bind(id, user.userId, displayName(user), ...values, Number(fields.nearCityBus), now, now, expiry(fields, now),
+        `).bind(id, user.userId, displayName(user), ...values, Number(fields.nearCityBus), fields.parkingLot, now, now, expiry(fields, now),
           user.userId, now - day, user.userId, now);
         const result = await writeWithReceipt(db, statement, user, id, "create", now);
         if (!result.meta.changes) {
@@ -276,10 +280,11 @@ export async function POST(request: Request) {
         const fields = listingInput(input, now, user);
         const values = listingValues(fields);
         const statement = db.prepare(`
-          UPDATE listings SET kind = ?, role = ?, title = ?, area = ?, destination = ?, days = ?, date = ?, "start" = ?, "end" = ?, note = ?, purdue = ?, near_citybus = COALESCE(?, near_citybus), updated_at = ?, expires = ?
+          UPDATE listings SET kind = ?, role = ?, title = ?, area = ?, destination = ?, days = ?, date = ?, "start" = ?, "end" = ?, note = ?, purdue = ?, near_citybus = COALESCE(?, near_citybus), parking_lot = COALESCE(?, parking_lot), updated_at = ?, expires = ?
           WHERE id = ? AND owner_id = ? AND removed_at IS NULL AND hidden_at IS NULL
             AND (expires > ? OR (SELECT COUNT(*) FROM listings WHERE owner_id = ? AND removed_at IS NULL AND expires > ?) < ${MAX_ACTIVE_POSTS})
-        `).bind(...values, input.nearCityBus === undefined ? null : Number(fields.nearCityBus), now, expiry(fields, now), id, user.userId, now, user.userId, now);
+        `).bind(...values, input.nearCityBus === undefined ? null : Number(fields.nearCityBus),
+          input.parkingLot === undefined && usesCampusParking(fields.kind, fields.destination) ? null : fields.parkingLot, now, expiry(fields, now), id, user.userId, now, user.userId, now);
         const result = await writeWithReceipt(db, statement, user, id, "update", now);
         if (!result.meta.changes) {
           const expired = await db.prepare("SELECT 1 FROM listings WHERE id = ? AND owner_id = ? AND removed_at IS NULL AND hidden_at IS NULL AND expires <= ?")

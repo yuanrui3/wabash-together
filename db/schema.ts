@@ -11,6 +11,7 @@ export const listings = sqliteTable("listings", {
   title: text("title").notNull(),
   area: text("area").notNull(),
   destination: text("destination").notNull(),
+  parkingLot: text("parking_lot").notNull().default(""),
   days: text("days", { mode: "json" }).$type<string[]>().notNull(),
   date: text("date").notNull().default(""),
   start: text("start").notNull(),

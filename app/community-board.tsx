@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import {
-  AREAS, DAYS, OUTSIDE_AREA, POSTING_LIMITS, TERMS_VERSION, type Community, type Intro, type Kind, type Listing, type Role,
+  AREAS, DAYS, PURDUE_PARKING, usesCampusParking, OUTSIDE_AREA, POSTING_LIMITS, TERMS_VERSION, type Community, type Intro, type Kind, type Listing, type Role,
 } from "../lib/community";
 import { areaMiles, estimateRide } from "../lib/ride-distance";
 import { AreaField, AreaPickerMap, useAreaPicker } from "./area-picker";
@@ -20,7 +20,7 @@ type BoardLinks = {
 };
 
 type ListingFields = Pick<
-  Listing, "kind" | "role" | "title" | "area" | "destination" | "days" | "date" | "start" | "end" | "note" | "purdue" | "nearCityBus"
+  Listing, "kind" | "role" | "title" | "area" | "destination" | "parkingLot" | "days" | "date" | "start" | "end" | "note" | "purdue" | "nearCityBus"
 >;
 
 type Mutation =
@@ -62,7 +62,8 @@ function readPostSeed(fragment: string) {
   const destination = AREAS.find(value => value === query.get("destination")) ?? "";
   const day = DAYS.find(value => value === query.get("day")) ?? "";
   const tripDate = query.get("date") ?? "";
-  return { kind, role, area, destination, day, date: /^\d{4}-\d{2}-\d{2}$/.test(tripDate) ? tripDate : "" };
+  const parkingLot = usesCampusParking(kind, destination) ? PURDUE_PARKING.find(lot => lot === query.get("parkingLot")) ?? "" : "";
+  return { kind, role, area, destination, parkingLot, day, date: /^\d{4}-\d{2}-\d{2}$/.test(tripDate) ? tripDate : "" };
 }
 
 function postFragment(seed: NonNullable<ReturnType<typeof readPostSeed>>) {
@@ -93,7 +94,11 @@ export function CommunityBoard({ signIn, postSignIn, connectionsSignIn }: BoardL
   const [kind, setKind] = useState<Kind>("carpool");
   const [area, setArea] = useState("");
   const [destination, setDestination] = useState("");
-  const picker = useAreaPicker("browse", kind, area, destination, setArea, setDestination);
+  const [parkingLot, setParkingLot] = useState("");
+  const picker = useAreaPicker("browse", kind, area, destination, setArea, value => {
+    if (value !== destination) setParkingLot("");
+    setDestination(value);
+  });
   const [role, setRole] = useState("");
   const [day, setDay] = useState("");
   const [date, setDate] = useState("");
@@ -206,6 +211,7 @@ export function CommunityBoard({ signIn, postSignIn, connectionsSignIn }: BoardL
   const matching = data?.listings.filter(listing =>
     listing.kind === kind &&
     (!role || listing.role === role) &&
+    (!parkingLot || listing.parkingLot === parkingLot) &&
     (!busOnly || listing.nearCityBus) &&
     (!purdueOnly || listing.purdue) &&
     (kind === "carshare" || hasRoute || !destination || destination === OUTSIDE_AREA || listing.destination === destination) &&
@@ -237,6 +243,7 @@ export function CommunityBoard({ signIn, postSignIn, connectionsSignIn }: BoardL
     setKind(next);
     setRole("");
     setDestination("");
+    setParkingLot("");
     setDay("");
     setDate("");
     setDetour(defaultDetour);
@@ -246,6 +253,7 @@ export function CommunityBoard({ signIn, postSignIn, connectionsSignIn }: BoardL
     picker.reset();
     setArea("");
     setDestination("");
+    setParkingLot("");
     setRole("");
     setDay("");
     setDate("");
@@ -260,7 +268,7 @@ export function CommunityBoard({ signIn, postSignIn, connectionsSignIn }: BoardL
     kind, role: role === "request" ? "offer" : "request",
     area: missingStart ? "" : area,
     destination: destination === OUTSIDE_AREA ? "" : destination,
-    day, date,
+    parkingLot, day, date,
   });
   const guestPostLink = postSeed
     ? postSignIn.split("?")[0] + "?return_to=" + encodeURIComponent("/" + postFragment(postSeed))
@@ -303,6 +311,7 @@ export function CommunityBoard({ signIn, postSignIn, connectionsSignIn }: BoardL
               label={kind === "oneoff" ? "Local pickup area" : kind === "carpool" ? "Commute pickup area" : "Car pickup area"} />
             {kind !== "carshare" && <AreaField picker={picker} field="dropoff" placeholder="Any destination"
               label={kind === "oneoff" ? "Local drop-off area" : "Work area"} />}
+            {usesCampusParking(kind, destination) && <CampusParking value={parkingLot} onChange={setParkingLot} browse />}
             {kind === "carpool" && (
               <label>Day
                 <select value={day} onChange={event => setDay(event.target.value)}>
@@ -373,7 +382,7 @@ export function CommunityBoard({ signIn, postSignIn, connectionsSignIn }: BoardL
                     <p>{kind === "carpool"
                       ? "Offer a seat or post the commute you need."
                       : kind === "oneoff" ? "Offer a seat or post a trip you need a ride for." : "Offer car access or tell nearby owners what you’re looking for."}</p>
-                    <a className="board-button is-primary" href={postFragment({kind, role: "offer", area: "", destination: "", day: "", date: ""})} onClick={newPost}>Add a {kind === "carpool" ? "carpool" : kind === "oneoff" ? "one-time ride" : "car-sharing"} post</a>
+                    <a className="board-button is-primary" href={postFragment({kind, role: "offer", area: "", destination: "", parkingLot: "", day: "", date: ""})} onClick={newPost}>Add a {kind === "carpool" ? "carpool" : kind === "oneoff" ? "one-time ride" : "car-sharing"} post</a>
                   </>}
                 </div>
               )}
@@ -502,6 +511,15 @@ export function CommunityBoard({ signIn, postSignIn, connectionsSignIn }: BoardL
   );
 }
 
+function CampusParking({ value, onChange, browse = false }: { value: string; onChange: (lot: string) => void; browse?: boolean }) {
+  return <label>Purdue parking lot (optional)
+    <select value={value} onChange={event => onChange(event.target.value)}>
+      <option value="">{browse ? "Any lot" : "Flexible / decide later"}</option>
+      {PURDUE_PARKING.map(lot => <option key={lot}>{lot}</option>)}
+    </select>
+  </label>;
+}
+
 function MeetingStops({ area, destination }: { area: string; destination: string }) {
   const pickup = area !== OUTSIDE_AREA && area;
   const dropoff = destination !== OUTSIDE_AREA && destination !== area && destination;
@@ -541,6 +559,7 @@ function ListingCard({ listing, children, route, heading: Heading = "h3" }: {
       </div>
       <Heading>{listing.title}</Heading>
       <ul className="board-meta">
+        {listing.parkingLot && usesCampusParking(listing.kind, listing.destination) && <li>Parking: {listing.parkingLot}</li>}
         <li>{listing.area}{listing.destination ? ` to ${listing.destination}` : ""}</li>
         {listing.nearCityBus && <li>Can meet near a CityBus stop</li>}
         {listing.days.length > 0 && <li>{listing.days.join(" · ")}</li>}
@@ -579,7 +598,11 @@ function PostForm({ listing, defaultKind, seed, purdueEligible, busy, error, onS
   const [validation, setValidation] = useState("");
   const outside = area === OUTSIDE_AREA || (kind !== "carshare" && destination === OUTSIDE_AREA);
 
-  const picker = useAreaPicker("post", kind, area, destination, setArea, setDestination);
+  const [parkingLot, setParkingLot] = useState(listing?.parkingLot ?? seed?.parkingLot ?? "");
+  const picker = useAreaPicker("post", kind, area, destination, setArea, value => {
+    if (value !== destination) setParkingLot("");
+    setDestination(value);
+  });
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -591,7 +614,7 @@ function PostForm({ listing, defaultKind, seed, purdueEligible, busy, error, onS
     setValidation("");
     const form = new FormData(event.currentTarget);
     void onSubmit({
-      kind, role, area,
+      kind, role, area, parkingLot: usesCampusParking(kind, destination) ? parkingLot : "",
       title: String(form.get("title") ?? "").trim(),
       destination: kind === "carshare" ? "" : destination,
       days: kind === "oneoff" ? [] : DAYS.filter(day => days.includes(day)),
@@ -609,7 +632,7 @@ function PostForm({ listing, defaultKind, seed, purdueEligible, busy, error, onS
       <p>{kind === "oneoff" ? role === "offer" ? "Driving farther? Post the local stretch you can share and the time you reach it." : "Choose where you can get in and where you want to get out locally." : "Choose an area where you can meet, even if you live elsewhere."} Agree on the exact spot privately.</p>
       <div className="board-form-grid">
         <label>Category
-          <select value={kind} onChange={event => { picker.reset(); setKind(event.target.value as Kind); }}>
+          <select value={kind} onChange={event => { picker.reset(); setParkingLot(""); setKind(event.target.value as Kind); }}>
             {kinds.map(option => <option key={option} value={option}>{kindLabels[option]}</option>)}
           </select>
         </label>
@@ -624,6 +647,7 @@ function PostForm({ listing, defaultKind, seed, purdueEligible, busy, error, onS
         {kind === "carpool" && (
           <>
             <AreaField picker={picker} field="dropoff" label="Work area" placeholder="Choose a work area" required />
+            {usesCampusParking(kind, destination) && <CampusParking value={parkingLot} onChange={setParkingLot} />}
             <label>Leave around<input name="start" type="time" defaultValue={listing?.start} required /></label>
             <label>Return around<input name="end" type="time" defaultValue={listing?.end} required /></label>
           </>

@@ -1,0 +1,1 @@
+ALTER TABLE `listings` ADD `parking_lot` text DEFAULT '' NOT NULL;

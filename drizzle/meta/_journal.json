@@ -29,6 +29,13 @@
       "when": 1795568240849,
       "tag": "0003_near_citybus",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1795581427209,
+      "tag": "0004_campus_parking_lot",
+      "breakpoints": true
     }
   ]
 }

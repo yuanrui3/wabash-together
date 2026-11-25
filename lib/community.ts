@@ -20,6 +20,18 @@ export const MAX_ACTIVE_POSTS = 10;
 export const MAX_POSTS_PER_24_HOURS = 10;
 export const POSTING_LIMITS = `You can have up to ${MAX_ACTIVE_POSTS} active posts and publish up to ${MAX_POSTS_PER_24_HOURS} new posts in any 24 hours.`;
 
+// Names follow Purdue Parking Operations and the West Lafayette campus map.
+export const PURDUE_PARKING = [
+  "Co-Rec lot", "Discovery Park lot", "Ross-Ade Stadium lot",
+  "Grant Street Parking Garage", "Harrison Street Parking Garage",
+  "Northwestern Avenue Parking Garage", "University Street Parking Garage",
+  "Wood Street Parking Garage",
+] as const;
+
+export function usesCampusParking(kind: string, destination: unknown) {
+  return kind === "carpool" && destination === "Purdue campus";
+}
+
 export const OUTSIDE_AREA = "outside-listed-areas";
 
 export const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
@@ -36,6 +48,7 @@ export interface Listing {
   title: string;
   area: string;
   destination: string;
+  parkingLot: string;
   days: string[];
   date: string;
   start: string;
