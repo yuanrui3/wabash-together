@@ -1,0 +1,1 @@
+ALTER TABLE `listings` ADD `near_citybus` integer DEFAULT false NOT NULL;
